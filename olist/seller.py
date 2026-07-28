@@ -140,69 +140,113 @@ class Seller:
         """
         Returns a DataFrame with:
         'seller_id', 'share_of_five_stars',
-        'share_of_one_stars', 'review_score'
+        'share_of_one_stars', 'review_score',
+        'cost_of_reviews'
         """
 
-        # Sipariş ürünlerini değerlendirmelerle birleştir
-        reviews = self.data["order_items"].merge(
-            self.data["order_reviews"],
+        order_items = self.data["order_items"].copy()
+        order_reviews = self.data["order_reviews"].copy()
+
+        # Önceki projede kullandığımız review metrikleri
+        seller_reviews = order_items.merge(
+            order_reviews,
             on="order_id",
             how="inner",
         )
 
-        # Beş yıldız ve bir yıldız göstergeleri
-        reviews["dim_is_five_star"] = (
-            reviews["review_score"] == 5
+        seller_reviews["dim_is_five_star"] = (
+            seller_reviews["review_score"] == 5
         ).astype(int)
 
-        reviews["dim_is_one_star"] = (
-            reviews["review_score"] == 1
+        seller_reviews["dim_is_one_star"] = (
+            seller_reviews["review_score"] == 1
         ).astype(int)
 
-        # Satıcı başına değerlendirme metrikleri
-        seller_reviews = (
-            reviews
+        review_metrics = (
+            seller_reviews
             .groupby("seller_id", as_index=False)
             .agg(
-                share_of_five_stars=(
-                    "dim_is_five_star",
-                    "mean",
-                ),
-                share_of_one_stars=(
-                    "dim_is_one_star",
-                    "mean",
-                ),
-                review_score=(
-                    "review_score",
-                    "mean",
-                ),
+                share_of_five_stars=("dim_is_five_star", "mean"),
+                share_of_one_stars=("dim_is_one_star", "mean"),
+                review_score=("review_score", "mean"),
             )
         )
 
-        return seller_reviews
+        # Review maliyeti sipariş başına yalnızca bir kez hesaplanır
+        review_costs = (
+            seller_reviews[
+                ["order_id", "seller_id", "review_score"]
+            ]
+            .drop_duplicates(
+                subset=["order_id", "seller_id"]
+            )
+            .copy()
+        )
+
+        cost_mapping = {
+            1: 100,
+            2: 50,
+            3: 40,
+            4: 0,
+            5: 0,
+        }
+
+        review_costs["cost_of_reviews"] = (
+            review_costs["review_score"].map(cost_mapping)
+        )
+
+        review_costs = (
+            review_costs
+            .groupby("seller_id", as_index=False)
+            .agg(cost_of_reviews=("cost_of_reviews", "sum"))
+        )
+
+        return review_metrics.merge(
+            review_costs,
+            on="seller_id",
+            how="inner",
+        )
     def get_training_data(self):
         """
-        Returns a DataFrame with:
-        ['seller_id', 'seller_city', 'seller_state', 'delay_to_carrier',
-        'wait_time', 'date_first_sale', 'date_last_sale', 'months_on_olist', 'share_of_one_stars',
-        'share_of_five_stars', 'review_score', 'n_orders', 'quantity',
-        'quantity_per_order', 'sales']
+        Returns seller-level training data including:
+        revenues, cost_of_reviews and profits.
         """
 
-        training_set =\
-            self.get_seller_features()\
-                .merge(
-                self.get_seller_delay_wait_time(), on='seller_id'
-               ).merge(
-                self.get_active_dates(), on='seller_id'
-               ).merge(
-                self.get_quantity(), on='seller_id'
-               ).merge(
-                self.get_sales(), on='seller_id'
-               )
+        training_set = (
+            self.get_seller_features()
+            .merge(
+                self.get_seller_delay_wait_time(),
+                on="seller_id",
+            )
+            .merge(
+                self.get_active_dates(),
+                on="seller_id",
+            )
+            .merge(
+                self.get_quantity(),
+                on="seller_id",
+            )
+            .merge(
+                self.get_sales(),
+                on="seller_id",
+            )
+            .merge(
+                self.get_review_score(),
+                on="seller_id",
+            )
+        )
 
-        if self.get_review_score() is not None:
-            training_set = training_set.merge(self.get_review_score(),
-                                              on='seller_id')
+        # Gelir = satışlardan %10 komisyon
+        #       + satıcı başına aylık 80 BRL abonelik
+        training_set["revenues"] = (
+            0.10 * training_set["sales"]
+            + 80 * training_set["months_on_olist"]
+        )
+
+        # IT maliyetleri bu aşamada henüz dahil değil
+        training_set["profits"] = (
+            training_set["revenues"]
+            - training_set["cost_of_reviews"]
+        )
 
         return training_set
