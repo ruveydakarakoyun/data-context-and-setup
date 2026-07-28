@@ -139,11 +139,47 @@ class Seller:
     def get_review_score(self):
         """
         Returns a DataFrame with:
-        'seller_id', 'share_of_five_stars', 'share_of_one_stars', 'review_score'
+        'seller_id', 'share_of_five_stars',
+        'share_of_one_stars', 'review_score'
         """
 
-        pass  # YOUR CODE HERE
+        # Sipariş ürünlerini değerlendirmelerle birleştir
+        reviews = self.data["order_items"].merge(
+            self.data["order_reviews"],
+            on="order_id",
+            how="inner",
+        )
 
+        # Beş yıldız ve bir yıldız göstergeleri
+        reviews["dim_is_five_star"] = (
+            reviews["review_score"] == 5
+        ).astype(int)
+
+        reviews["dim_is_one_star"] = (
+            reviews["review_score"] == 1
+        ).astype(int)
+
+        # Satıcı başına değerlendirme metrikleri
+        seller_reviews = (
+            reviews
+            .groupby("seller_id", as_index=False)
+            .agg(
+                share_of_five_stars=(
+                    "dim_is_five_star",
+                    "mean",
+                ),
+                share_of_one_stars=(
+                    "dim_is_one_star",
+                    "mean",
+                ),
+                review_score=(
+                    "review_score",
+                    "mean",
+                ),
+            )
+        )
+
+        return seller_reviews
     def get_training_data(self):
         """
         Returns a DataFrame with:
