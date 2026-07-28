@@ -13,13 +13,13 @@ class Order:
         # Assign an attribute ".data" to all new instances of Order
         self.data = Olist().get_data()
 
-    def get_wait_time(self):
+    def get_wait_time(self, is_delivered=True):
         orders = self.data["orders"].copy()
 
-        # Yalnızca teslim edilmiş siparişleri al
-        orders = orders[
-            orders["order_status"] == "delivered"
-        ].copy()
+        if is_delivered:
+            orders = orders[
+                orders["order_status"] == "delivered"
+            ].copy()
 
         date_columns = [
             "order_purchase_timestamp",
@@ -46,9 +46,9 @@ class Order:
             - orders["order_estimated_delivery_date"]
         ).dt.total_seconds() / (24 * 60 * 60)
 
-        orders["delay_vs_expected"] = orders[
-            "delay_vs_expected"
-        ].clip(lower=0)
+        orders["delay_vs_expected"] = (
+            orders["delay_vs_expected"].clip(lower=0)
+        )
 
         return orders[
             [
@@ -261,9 +261,13 @@ class Order:
 
         return distance_seller_customer
 
-    def get_training_data(self):
+    def get_training_data(
+        self,
+        is_delivered=True,
+        with_distance_seller_customer=False
+    ):
         training_data = (
-            self.get_wait_time()
+            self.get_wait_time(is_delivered=is_delivered)
             .merge(
                 self.get_review_score(),
                 on="order_id",
@@ -284,7 +288,13 @@ class Order:
                 on="order_id",
                 how="inner"
             )
-            .dropna()
         )
 
-        return training_data
+        if with_distance_seller_customer:
+            training_data = training_data.merge(
+                self.get_distance_seller_customer(),
+                on="order_id",
+                how="inner"
+            )
+
+        return training_data.dropna()
